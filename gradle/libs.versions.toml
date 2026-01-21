@@ -1,0 +1,16 @@
+[versions]
+junit = "6.0.2"
+chicory = "1.6.1"
+
+[libraries]
+# Test dependencies
+junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit" }
+junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+
+# IDE stuffs
+jetbrains-annotations = { module = "org.jetbrains:annotations", version = "26.0.2-1" }
+
+# Chicory modules
+chicory-runtime = { module = "com.dylibso.chicory:runtime", version.ref = "chicory" }
+chicory-wasm = { module = "com.dylibso.chicory:wasm", version.ref = "chicory" }
