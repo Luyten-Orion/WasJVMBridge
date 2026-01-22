@@ -26,8 +26,7 @@ public class WasJVMBridge {
     public final Map<Long, Object> globalInstanceRegistry = new ConcurrentHashMap<>();
 
     public final AtomicLong handleCounter = new AtomicLong(1);
-    public final ThreadLocal<ErrorContext> lastError = ThreadLocal.withInitial(
-            () -> new ErrorContext("", INVALID_HANDLE));
+    public final ThreadLocal<ErrorContext> lastError = ThreadLocal.withInitial(() -> new ErrorContext("", INVALID_HANDLE));
 
     public List<HostFunction> getFunctions(EnumSet<Permission> permissions) {
         List<HostFunction> functions = new ArrayList<>();
@@ -96,25 +95,16 @@ public class WasJVMBridge {
 
     public void validateMember(Class<?> declClass, Object target, String name) {
         if (target != null && !declClass.isInstance(target)) {
-            throw new IllegalArgumentException(
-                    "Compatibility error: Member " + name + " belongs to " + declClass.getName() + " but target is " + target
-                            .getClass()
-                            .getName());
+            throw new IllegalArgumentException("Compatibility error: Member " + name + " belongs to " + declClass.getName() + " but target is " + target.getClass().getName());
         }
     }
 
     public long registerClass(Class<?> clazz) {
-        return classRegistry
-                .entrySet()
-                .stream()
-                .filter(entry -> entry.getValue().equals(clazz))
-                .map(Map.Entry::getKey)
-                .findFirst()
-                .orElseGet(() -> {
-                    long id = handleCounter.getAndIncrement();
-                    classRegistry.put(id, clazz);
-                    return id;
-                });
+        return classRegistry.entrySet().stream().filter(entry -> entry.getValue().equals(clazz)).map(Map.Entry::getKey).findFirst().orElseGet(() -> {
+            long id = handleCounter.getAndIncrement();
+            classRegistry.put(id, clazz);
+            return id;
+        });
     }
 
     public long registerObject(Object obj) {
@@ -124,20 +114,13 @@ public class WasJVMBridge {
     }
 
     public long findRegisteredClass(Class<?> c) {
-        return classRegistry
-                .entrySet()
-                .stream()
-                .filter(e -> e.getValue().equals(c))
-                .map(Map.Entry::getKey)
-                .findFirst()
-                .orElse(INVALID_HANDLE);
+        return classRegistry.entrySet().stream().filter(e -> e.getValue().equals(c)).map(Map.Entry::getKey).findFirst().orElse(INVALID_HANDLE);
     }
 
     public long[] handleError(Exception e) {
         Throwable actual = (e instanceof java.lang.reflect.InvocationTargetException) ? e.getCause() : e;
         long exClassHandle = registerClass(actual.getClass());
-        lastError.set(
-                new ErrorContext(actual.getMessage() != null ? actual.getMessage() : actual.toString(), exClassHandle));
+        lastError.set(new ErrorContext(actual.getMessage() != null ? actual.getMessage() : actual.toString(), exClassHandle));
         return new long[]{INVALID_HANDLE};
     }
 

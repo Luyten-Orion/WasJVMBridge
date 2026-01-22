@@ -22,9 +22,7 @@ public abstract class BaseBridgeTest {
     }
 
     protected HostFunction findFunc(String name) {
-        return hostFunctions.stream()
-                .filter(f -> f.name().equals(name)).findFirst()
-                .orElseThrow(() -> new RuntimeException("Missing: " + name));
+        return hostFunctions.stream().filter(f -> f.name().equals(name)).findFirst().orElseThrow(() -> new RuntimeException("Missing: " + name));
     }
 
     @BeforeEach

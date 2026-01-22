@@ -27,6 +27,9 @@ dependencies {
     // Chicory
     api(libs.chicory.runtime)
     api(libs.chicory.wasm)
+
+    // Bytebuddy
+    api(libs.bytebuddy)
 }
 
 // Apply a specific Java toolchain to ease working on different environments.

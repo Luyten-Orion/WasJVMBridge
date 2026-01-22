@@ -11,7 +11,7 @@ public class WasJVMBridgeCTest extends BaseBridgeTest {
     }
 
     @Test
-    @DisplayName("C: Test Reflection & Multi-Value Returns")
+    @DisplayName("C: Test Reflection")
     void testReflectionFullFlow() {
         // Resolve the TestTarget class in the bridge so the C side can find it
         bridge.registerClass(TestTarget.class);

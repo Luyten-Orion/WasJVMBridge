@@ -23,9 +23,7 @@ public class CollectionModule extends ModuleBase {
                  * Returns the total bytes required to store the header and contiguous data.
                  * Useful for allocating the destination buffer in WASM via malloc.
                  */
-                new HostFunction(
-                        WasJVMBridge.NAMESPACE, "get_encoded_list_size",
-                        FunctionType.of(List.of(ValType.I64), List.of(ValType.I32)), (inst, args) -> {
+                new HostFunction(WasJVMBridge.NAMESPACE, "get_encoded_list_size", FunctionType.of(List.of(ValType.I64), List.of(ValType.I32)), (inst, args) -> {
                     Object obj = kernel.getObject(args[0]);
                     if (obj == null) return new long[]{0};
 
@@ -80,17 +78,14 @@ public class CollectionModule extends ModuleBase {
                     };
 
                     return new long[]{8 + ((long) count * stride)};
-                }
-                ),
+                }),
 
                 /* pull_list_elements(list_handle: i64, ptr: i32) -> i32
                  * Serializes the collection into WASM memory at the provided pointer.
                  * Returns the number of elements written.
                  * Layout: [i32 type_tag][i32 count][... contiguous data ...]
                  */
-                new HostFunction(
-                        WasJVMBridge.NAMESPACE, "pull_list_elements",
-                        FunctionType.of(List.of(ValType.I64, ValType.I32), List.of(ValType.I32)), (inst, args) -> {
+                new HostFunction(WasJVMBridge.NAMESPACE, "pull_list_elements", FunctionType.of(List.of(ValType.I64, ValType.I32), List.of(ValType.I32)), (inst, args) -> {
                     try {
                         Object obj = kernel.getObject(args[0]);
                         int base = (int) args[1];
@@ -101,9 +96,7 @@ public class CollectionModule extends ModuleBase {
                         kernel.handleError(e);
                         return new long[]{-1};
                     }
-                }
-                )
-        );
+                }));
     }
 
     private int dispatchToInternal(Instance inst, int base, Object obj) {
@@ -244,10 +237,10 @@ public class CollectionModule extends ModuleBase {
 
     private void writeDefaultValue(Memory mem, ArgType type, int start, int index) {
         switch (type) {
-            case HANDLE         -> mem.writeLong(start + (index * 8), WasJVMBridge.INVALID_HANDLE);
-            case I8, BOOLEAN    -> mem.writeByte(start + index, (byte) 0);
-            case I16            -> mem.writeShort(start + (index * 2), (short) 0);
-            case I32, F32       -> mem.writeI32(start + (index * 4), 0);
+            case HANDLE -> mem.writeLong(start + (index * 8), WasJVMBridge.INVALID_HANDLE);
+            case I8, BOOLEAN -> mem.writeByte(start + index, (byte) 0);
+            case I16 -> mem.writeShort(start + (index * 2), (short) 0);
+            case I32, F32 -> mem.writeI32(start + (index * 4), 0);
             case I64, F64, CHAR -> mem.writeLong(start + (index * 8), 0L);
         }
     }

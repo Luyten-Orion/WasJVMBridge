@@ -8,6 +8,10 @@ public class TestTarget {
         this.result = prefix + " count: " + count + " flag: " + flag;
     }
 
-    public void voidMethod() {}
-    public void crash() { throw new RuntimeException("test error"); }
+    public void voidMethod() {
+    }
+
+    public void crash() {
+        throw new RuntimeException("test error");
+    }
 }

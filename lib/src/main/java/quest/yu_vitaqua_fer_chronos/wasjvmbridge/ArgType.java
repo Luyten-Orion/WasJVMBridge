@@ -12,7 +12,11 @@ public enum ArgType {
     BOOLEAN(8); // i32 (0 or 1)
 
     public final int tag;
-    ArgType(int tag) { this.tag = tag; }
+
+    ArgType(int tag) {
+        this.tag = tag;
+    }
+
     public static ArgType fromTag(int tag) {
         return values()[tag];
     }
