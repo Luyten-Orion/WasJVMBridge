@@ -1,163 +1,99 @@
 package quest.yu_vitaqua_fer_chronos.wasjvmbridge.modules;
 
-import com.dylibso.chicory.runtime.HostFunction;
-import com.dylibso.chicory.wasm.types.FunctionType;
-import com.dylibso.chicory.wasm.types.ValType;
+import com.dylibso.chicory.runtime.Instance;
 import quest.yu_vitaqua_fer_chronos.wasjvmbridge.WasJVMBridge;
+import quest.yu_vitaqua_fer_chronos.wasjvmbridge.api.HostApi;
+import quest.yu_vitaqua_fer_chronos.wasjvmbridge.utils.WasmExport;
 
-import java.lang.reflect.Field;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
-import java.util.List;
 
-public class ReflectionModule extends ModuleBase {
-    public ReflectionModule(WasJVMBridge kernel) {
-        super(kernel);
+public class ReflectionModule extends HostApi {
+    public ReflectionModule(WasJVMBridge bridge) {
+        super(bridge);
     }
 
-    public List<HostFunction> getFunctions() {
-        return List.of(
-                /* get_class(name_ptr: i32, name_len: i32) -> i64 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "get_class", FunctionType.of(List.of(ValType.I32, ValType.I32), List.of(ValType.I64)), (inst, args) -> {
-                    try {
-                        String name = inst.memory().readString((int) args[0], (int) args[1]);
-                        Class<?> clazz = switch (name) {
-                            case "int" -> int.class;
-                            case "boolean" -> boolean.class;
-                            case "long" -> long.class;
-                            case "void" -> void.class;
-                            default -> Class.forName(name);
-                        };
-                        return new long[]{kernel.registerClass(clazz)};
-                    } catch (Exception e) {
-                        return kernel.handleError(e);
-                    }
-                }),
+    @Override
+    public String getNamespace() {
+        return "wasjvmb_reflection";
+    }
 
-                /* get_constructor_id(class_handle: i64, params_ptr: i32, count: i32) -> i64
-                 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "get_constructor_id", FunctionType.of(List.of(ValType.I64, ValType.I32, ValType.I32), List.of(ValType.I64)), (inst, args) -> {
-                    try {
-                        Class<?> clazz = kernel.classRegistry.get(args[0]);
-                        int count = (int) args[2];
-                        Class<?>[] params = new Class<?>[count];
-                        for (int i = 0; i < count; i++) {
-                            params[i] = kernel.classRegistry.get(inst.memory().readLong((int) args[1] + (i * 8)));
-                        }
-                        var ctor = clazz.getDeclaredConstructor(params);
-                        ctor.setAccessible(true);
-                        long id = kernel.handleCounter.getAndIncrement();
-                        kernel.constructorRegistry.put(id, ctor);
-                        return new long[]{id};
-                    } catch (Exception e) {
-                        return kernel.handleError(e);
-                    }
-                }),
+    @WasmExport(params = {"name_ptr", "name_len"})
+    public long get_class(Instance inst, int ptr, int len) throws Exception {
+        String name = inst.memory().readString(ptr, len);
+        Class<?> clazz = switch (name) {
+            case "int" -> int.class;
+            case "boolean" -> boolean.class;
+            case "long" -> long.class;
+            case "void" -> void.class;
+            default -> Class.forName(name);
+        };
+        return bridge.registerClass(clazz);
+    }
 
-                /* new_instance(ctor_handle: i64, args_ptr: i32, count: i32) -> (i64)
-                 * Returns [ClassID, InstanceID]
-                 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "new_instance", FunctionType.of(List.of(ValType.I64, ValType.I32, ValType.I32), List.of(ValType.I64)), (inst, args) -> {
-                    try {
-                        Object res = kernel.invokeConstructorInternal(args[0], (int) args[1], (int) args[2], inst);
-                        long id = kernel.handleCounter.getAndIncrement();
-                        kernel.globalInstanceRegistry.put(id, res);
-                        return new long[]{id};
-                    } catch (Exception e) {
-                        return kernel.handleError(e);
-                    }
-                }),
+    @WasmExport(params = {"class_h", "params_ptr", "count"})
+    public long get_constructor_id(Instance inst, long classH, int ptr, int count) throws Exception {
+        Class<?> clazz = bridge.classRegistry.get(classH);
+        Class<?>[] params = new Class<?>[count];
+        for (int i = 0; i < count; i++) params[i] = bridge.classRegistry.get(inst.memory().readLong(ptr + (i * 8)));
+        Constructor<?> ctor = clazz.getDeclaredConstructor(params);
+        ctor.setAccessible(true);
+        long id = bridge.handleCounter.getAndIncrement();
+        // Since we removed specific registries, using global registry for IDs is cleaner
+        return bridge.registerObject(ctor);
+    }
 
-                /* get_method_id(class_handle, name_ptr, name_len, params_ptr, params_count) -> i64 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "get_method_id", FunctionType.of(List.of(ValType.I64, ValType.I32, ValType.I32, ValType.I32, ValType.I32), List.of(ValType.I64)), (inst, args) -> {
-                    try {
-                        Class<?> clazz = kernel.classRegistry.get(args[0]);
-                        String name = inst.memory().readString((int) args[1], (int) args[2]);
-                        int count = (int) args[4];
-                        Class<?>[] params = new Class<?>[count];
-                        for (int i = 0; i < count; i++) {
-                            params[i] = kernel.classRegistry.get(inst.memory().readLong((int) args[3] + (i * 8)));
-                        }
-                        Method m = clazz.getMethod(name, params);
-                        long id = kernel.handleCounter.getAndIncrement();
-                        kernel.methodRegistry.put(id, m);
-                        return new long[]{id};
-                    } catch (Exception e) {
-                        return kernel.handleError(e);
-                    }
-                }),
+    @WasmExport(params = {"class_h", "name_ptr", "name_len", "params_ptr", "count"})
+    public long get_method_id(Instance inst, long classH, int namePtr, int nameLen, int paramsPtr, int count) throws Exception {
+        Class<?> clazz = bridge.classRegistry.get(classH);
+        String name = inst.memory().readString(namePtr, nameLen);
+        Class<?>[] params = new Class<?>[count];
+        for (int i = 0; i < count; i++) {
+            params[i] = bridge.classRegistry.get(inst.memory().readLong(paramsPtr + (i * 8)));
+        }
+        return bridge.registerObject(clazz.getMethod(name, params));
+    }
 
-                /* call_method_void(obj_handle, method_id, args_ptr, args_count) -> void */
-                new HostFunction(WasJVMBridge.NAMESPACE, "call_method_void", FunctionType.of(List.of(ValType.I64, ValType.I64, ValType.I32, ValType.I32), List.of()), (inst, args) -> {
-                    try {
-                        kernel.invokeInternal(args[0], args[1], (int) args[2], (int) args[3], inst);
-                        return null;
-                    } catch (Exception e) {
-                        kernel.handleError(e);
-                        return null;
-                    }
-                }),
+    @WasmExport(params = {"obj_h", "method_h", "args_ptr", "count"})
+    public long call_method_obj(Instance inst, long objH, long methodH, int argsPtr, int count) throws Exception {
+        Method m = (Method) bridge.getObject(methodH);
+        Object target = (objH == 0) ? null : bridge.getObject(objH);
+        Object[] params = bridge.unpackArgsFromMemory(argsPtr, count, inst);
+        return bridge.registerObject(m.invoke(target, params));
+    }
 
-                /* call_method_obj(obj_handle, method_id, args_ptr, args_count) -> (i64) */
-                new HostFunction(WasJVMBridge.NAMESPACE, "call_method_obj", FunctionType.of(List.of(ValType.I64, ValType.I64, ValType.I32, ValType.I32), List.of(ValType.I64)), (inst, args) -> {
-                    try {
-                        Object res = kernel.invokeInternal(args[0], args[1], (int) args[2], (int) args[3], inst);
-                        if (res == null) return new long[]{0L};
-                        long id = kernel.handleCounter.getAndIncrement();
-                        kernel.globalInstanceRegistry.put(id, res);
-                        return new long[]{id};
-                    } catch (Exception e) {
-                        return kernel.handleError(e);
-                    }
-                }),
+    @WasmExport(params = {"obj_h", "method_h", "args_ptr", "count"})
+    public void call_method_void(Instance inst, long objH, long methodH, int argsPtr, int count) throws Exception {
+        Method m = (Method) bridge.getObject(methodH);
+        Object target = (objH == 0) ? null : bridge.getObject(objH);
+        m.invoke(target, bridge.unpackArgsFromMemory(argsPtr, count, inst));
+    }
 
-                /* get_field_id(class_handle, name_ptr, name_len) -> i64 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "get_field_id", FunctionType.of(List.of(ValType.I64, ValType.I32, ValType.I32), List.of(ValType.I64)), (inst, args) -> {
-                    try {
-                        Class<?> clazz = kernel.classRegistry.get(args[0]);
-                        String name = inst.memory().readString((int) args[1], (int) args[2]);
-                        Field f = clazz.getField(name);
-                        long id = kernel.handleCounter.getAndIncrement();
-                        kernel.fieldRegistry.put(id, f);
-                        return new long[]{id};
-                    } catch (Exception e) {
-                        return kernel.handleError(e);
-                    }
-                }),
+    @WasmExport(params = {"ctor_h", "args_ptr", "count"})
+    public long new_instance(Instance inst, long ctorH, int argsPtr, int count) throws Exception {
+        Object obj = bridge.getObject(ctorH);
+        if (!(obj instanceof Constructor<?> ctor)) {
+            throw new IllegalArgumentException("Handle is not a constructor");
+        }
 
-                /* get_field_obj(obj_handle, field_id) -> i64 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "get_field_obj", FunctionType.of(List.of(ValType.I64, ValType.I64), List.of(ValType.I64)), (inst, args) -> {
-                    try {
-                        Object target = kernel.globalInstanceRegistry.get(args[0]);
-                        Field f = kernel.fieldRegistry.get(args[1]);
-                        kernel.validateMember(f.getDeclaringClass(), target, f.getName());
-                        Object val = f.get(target);
-                        long id = kernel.handleCounter.getAndIncrement();
-                        kernel.globalInstanceRegistry.put(id, val);
-                        return new long[]{id};
-                    } catch (Exception e) {
-                        return kernel.handleError(e);
-                    }
-                }),
+        Object[] params = bridge.unpackArgsFromMemory(argsPtr, count, inst);
+        return bridge.registerObject(ctor.newInstance(params));
+    }
 
-                /* set_field_obj(obj_handle, field_id, value_handle) -> void */
-                new HostFunction(WasJVMBridge.NAMESPACE, "set_field_obj", FunctionType.of(List.of(ValType.I64, ValType.I64, ValType.I64), List.of()), (inst, args) -> {
-                    try {
-                        Object target = kernel.globalInstanceRegistry.get(args[0]);
-                        Field f = kernel.fieldRegistry.get(args[1]);
-                        kernel.validateMember(f.getDeclaringClass(), target, f.getName());
-                        Object value = (args[2] == 0) ? null : kernel.globalInstanceRegistry.get(args[2]);
-                        f.set(target, value);
-                        return null;
-                    } catch (Exception e) {
-                        kernel.handleError(e);
-                        return null;
-                    }
-                }),
+    @WasmExport(params = {"class_h", "name_ptr", "name_len"})
+    public long get_field_id(Instance inst, long classH, int ptr, int len) throws Exception {
+        Class<?> clazz = bridge.classRegistry.get(classH);
+        String name = inst.memory().readString(ptr, len);
+        java.lang.reflect.Field field = clazz.getDeclaredField(name);
+        field.setAccessible(true);
+        return bridge.registerObject(field);
+    }
 
-                /* release_instance(obj_handle: i64) -> void */
-                new HostFunction(WasJVMBridge.NAMESPACE, "release_instance", FunctionType.of(List.of(ValType.I64), List.of()), (inst, args) -> {
-                    kernel.globalInstanceRegistry.remove(args[0]);
-                    return null;
-                }));
+    @WasmExport(params = {"obj_h", "field_h", "value_h"})
+    public void set_field_obj(Instance inst, long objH, long fieldH, long valueH) throws Exception {
+        java.lang.reflect.Field field = (java.lang.reflect.Field) bridge.getObject(fieldH);
+        Object target = bridge.getObject(objH);
+        Object value = (valueH == 0) ? null : bridge.getObject(valueH);
+        field.set(target, value);
     }
 }

@@ -45,3 +45,30 @@ tasks.test {
         events("passed", "skipped", "failed")
     }
 }
+
+sourceSets {
+    create("generator") {
+        java {
+            srcDir("src/generator/java")
+        }
+        // This allows the generator to "see" your bridge classes
+        compileClasspath += sourceSets.main.get().output
+        runtimeClasspath += sourceSets.main.get().output
+    }
+}
+
+val generatorImplementation: Configuration? by configurations.getting {
+    extendsFrom(configurations.implementation.get())
+}
+
+tasks.register<JavaExec>("generateWasmHeaders") {
+    group = "build"
+    dependsOn(tasks.compileJava, tasks.getByName("compileGeneratorJava"))
+
+    mainClass.set("quest.yu_vitaqua_fer_chronos.wasjvmbridge.tasks.generators.Runner")
+
+    // Use the generator source set's classpath
+    classpath = sourceSets["generator"].runtimeClasspath
+
+    args(layout.projectDirectory.file("wasjvm_autogen.h").asFile.absolutePath)
+}

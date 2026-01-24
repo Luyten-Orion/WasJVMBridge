@@ -1,51 +1,41 @@
 package quest.yu_vitaqua_fer_chronos.wasjvmbridge.modules;
 
-import com.dylibso.chicory.runtime.HostFunction;
-import com.dylibso.chicory.wasm.types.FunctionType;
-import com.dylibso.chicory.wasm.types.ValType;
+import com.dylibso.chicory.runtime.Instance;
 import quest.yu_vitaqua_fer_chronos.wasjvmbridge.WasJVMBridge;
+import quest.yu_vitaqua_fer_chronos.wasjvmbridge.api.HostApi;
+import quest.yu_vitaqua_fer_chronos.wasjvmbridge.utils.WasmExport;
 
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 
-public class StringModule extends ModuleBase {
-    public StringModule(WasJVMBridge kernel) {
-        super(kernel);
+public class StringModule extends HostApi {
+    public StringModule(WasJVMBridge bridge) {
+        super(bridge);
     }
 
-    public List<HostFunction> getFunctions() {
-        return List.of(
-                /* create_string(ptr: i32, len: i32) -> i64
-                 * Reads a UTF-8 string from WASM memory and registers it as a Java String.
-                 * Returns the new object handle.
-                 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "create_string", FunctionType.of(List.of(ValType.I32, ValType.I32), List.of(ValType.I64)), (inst, args) -> {
-                    String s = inst.memory().readString((int) args[0], (int) args[1]);
-                    long id = kernel.handleCounter.getAndIncrement();
-                    kernel.globalInstanceRegistry.put(id, s);
-                    return new long[]{id};
-                }),
+    @Override
+    public String getNamespace() {
+        return "wasjvmb_strings";
+    }
 
-                new HostFunction(WasJVMBridge.NAMESPACE, "get_string_content", FunctionType.of(List.of(ValType.I64, ValType.I32), List.of(ValType.I32)), (inst, args) -> {
-                    String s = (String) kernel.getObject(args[0]);
-                    byte[] b = s.getBytes(StandardCharsets.UTF_8);
-                    int ptr = (int) inst.export("malloc").apply(b.length)[0];
-                    inst.memory().write(ptr, b);
-                    // Write the length into the provided pointer
-                    inst.memory().writeI32((int) args[1], b.length);
-                    return new long[]{ptr};
-                }),
+    @WasmExport(params = {"ptr", "len"})
+    public long create_string(Instance inst, int ptr, int len) {
+        return bridge.registerObject(inst.memory().readString(ptr, len));
+    }
 
-                /* get_string_into(handle: i64, ptr: i32, max_len: i32) -> i32
-                 * Copies a Java String's UTF-8 bytes into a pre-allocated WASM buffer.
-                 * Returns the number of bytes actually written.
-                 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "get_string_into", FunctionType.of(List.of(ValType.I64, ValType.I32, ValType.I32), List.of(ValType.I32)), (inst, args) -> {
-                    String s = (String) kernel.globalInstanceRegistry.get(args[0]);
-                    byte[] b = s.getBytes(StandardCharsets.UTF_8);
-                    int len = Math.min(b.length, (int) args[2]);
-                    inst.memory().write((int) args[1], b, 0, len);
-                    return new long[]{len};
-                }));
+    @WasmExport(params = {"handle", "len_out_ptr"})
+    public int get_string_content(Instance inst, long handle, int lenOutPtr) {
+        byte[] b = ((String) bridge.getObject(handle)).getBytes(StandardCharsets.UTF_8);
+        int ptr = (int) inst.export("malloc").apply(b.length)[0];
+        inst.memory().write(ptr, b);
+        inst.memory().writeI32(lenOutPtr, b.length);
+        return ptr;
+    }
+
+    @WasmExport(params = {"handle", "ptr", "max_len"})
+    public int get_string_into(Instance inst, long handle, int ptr, int maxLen) {
+        byte[] b = ((String) bridge.getObject(handle)).getBytes(StandardCharsets.UTF_8);
+        int len = Math.min(b.length, maxLen);
+        inst.memory().write(ptr, b, 0, len);
+        return len;
     }
 }

@@ -1,264 +1,174 @@
 package quest.yu_vitaqua_fer_chronos.wasjvmbridge.modules;
 
-import com.dylibso.chicory.runtime.HostFunction;
 import com.dylibso.chicory.runtime.Instance;
 import com.dylibso.chicory.runtime.Memory;
-import com.dylibso.chicory.wasm.types.FunctionType;
-import com.dylibso.chicory.wasm.types.ValType;
 import quest.yu_vitaqua_fer_chronos.wasjvmbridge.ArgType;
 import quest.yu_vitaqua_fer_chronos.wasjvmbridge.WasJVMBridge;
+import quest.yu_vitaqua_fer_chronos.wasjvmbridge.api.HostApi;
+import quest.yu_vitaqua_fer_chronos.wasjvmbridge.utils.WasmExport;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
-import java.util.List;
 
-public class CollectionModule extends ModuleBase {
-    public CollectionModule(WasJVMBridge kernel) {
-        super(kernel);
+public class CollectionModule extends HostApi {
+    public CollectionModule(WasJVMBridge bridge) {
+        super(bridge);
     }
 
-    public List<HostFunction> getFunctions() {
-        return List.of(
-                /* get_encoded_list_size(list_handle: i64) -> i32
-                 * Returns the total bytes required to store the header and contiguous data.
-                 * Useful for allocating the destination buffer in WASM via malloc.
-                 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "get_encoded_list_size", FunctionType.of(List.of(ValType.I64), List.of(ValType.I32)), (inst, args) -> {
-                    Object obj = kernel.getObject(args[0]);
-                    if (obj == null) return new long[]{0};
-
-                    int count;
-                    ArgType type;
-
-                    // Determine count and type based on the same logic as dispatch
-                    if (obj instanceof int[]) {
-                        count = ((int[]) obj).length;
-                        type = ArgType.I32;
-                    } else if (obj instanceof long[]) {
-                        count = ((long[]) obj).length;
-                        type = ArgType.I64;
-                    } else if (obj instanceof float[]) {
-                        count = ((float[]) obj).length;
-                        type = ArgType.F32;
-                    } else if (obj instanceof double[]) {
-                        count = ((double[]) obj).length;
-                        type = ArgType.F64;
-                    } else if (obj instanceof boolean[]) {
-                        count = ((boolean[]) obj).length;
-                        type = ArgType.BOOLEAN;
-                    } else if (obj instanceof byte[]) {
-                        count = ((byte[]) obj).length;
-                        type = ArgType.I8;
-                    } else if (obj instanceof short[]) {
-                        count = ((short[]) obj).length;
-                        type = ArgType.I16;
-                    } else if (obj instanceof char[]) {
-                        count = ((char[]) obj).length;
-                        type = ArgType.CHAR;
-                    } else {
-                        Object[] elements = (obj instanceof Collection<?> c) ? c.toArray() : (Object[]) obj;
-                        count = elements.length;
-                        if (count == 0) return new long[]{8}; // Just header space
-
-                        // Use your homogeneity check logic
-                        type = determineType(elements[0]);
-                        for (Object e : elements) {
-                            if (e == null || determineType(e) != type) {
-                                type = ArgType.HANDLE;
-                                break;
-                            }
-                        }
-                    }
-
-                    int stride = switch (type) {
-                        case I8, BOOLEAN -> 1;
-                        case I16 -> 2;
-                        case I32, F32 -> 4;
-                        case I64, F64, CHAR, HANDLE -> 8;
-                    };
-
-                    return new long[]{8 + ((long) count * stride)};
-                }),
-
-                /* pull_list_elements(list_handle: i64, ptr: i32) -> i32
-                 * Serializes the collection into WASM memory at the provided pointer.
-                 * Returns the number of elements written.
-                 * Layout: [i32 type_tag][i32 count][... contiguous data ...]
-                 */
-                new HostFunction(WasJVMBridge.NAMESPACE, "pull_list_elements", FunctionType.of(List.of(ValType.I64, ValType.I32), List.of(ValType.I32)), (inst, args) -> {
-                    try {
-                        Object obj = kernel.getObject(args[0]);
-                        int base = (int) args[1];
-                        if (obj == null) return new long[]{0};
-
-                        return new long[]{dispatchToInternal(inst, base, obj)};
-                    } catch (Exception e) {
-                        kernel.handleError(e);
-                        return new long[]{-1};
-                    }
-                }));
+    @Override
+    public String getNamespace() {
+        return "wasjvmb_collections";
     }
 
-    private int dispatchToInternal(Instance inst, int base, Object obj) {
-        // Fast Paths: Primitive Arrays
-        if (obj instanceof int[] arr) return writeContiguous(inst, base, ArgType.I32, arr);
-        if (obj instanceof long[] arr) return writeContiguous(inst, base, ArgType.I64, arr);
-        if (obj instanceof float[] arr) return writeContiguous(inst, base, ArgType.F32, arr);
-        if (obj instanceof double[] arr) return writeContiguous(inst, base, ArgType.F64, arr);
-        if (obj instanceof boolean[] arr) return writeContiguous(inst, base, ArgType.BOOLEAN, arr);
-        if (obj instanceof byte[] arr) return writeContiguous(inst, base, ArgType.I8, arr);
-        if (obj instanceof short[] arr) return writeContiguous(inst, base, ArgType.I16, arr);
-        if (obj instanceof char[] arr) return writeContiguous(inst, base, ArgType.CHAR, arr);
+    @WasmExport(params = {"handle"})
+    public int get_encoded_list_size(long handle) {
+        Object obj = bridge.getObject(handle);
+        if (obj == null) return 0;
 
-        // Fallback: Boxed Collections/Arrays
-        Object[] elements;
-        if (obj instanceof Collection<?> c) {
-            elements = c.toArray();
-        } else if (obj instanceof Object[] a) {
-            elements = a;
-        } else {
-            return 0;
+        int count = getLength(obj);
+        ArgType type = determineHomogeneousType(obj);
+        int stride = getStride(type);
+
+        // Header (8 bytes: 4 for tag, 4 for count) + (elements * size)
+        return 8 + (count * stride);
+    }
+
+    private int getLength(Object obj) {
+        if (obj instanceof Collection<?> c) return c.size();
+        return java.lang.reflect.Array.getLength(obj);
+    }
+
+    // --- Internal Marshalling Logic ---
+
+    private ArgType determineHomogeneousType(Object obj) {
+        if (obj instanceof int[]) return ArgType.I32;
+        if (obj instanceof long[]) return ArgType.I64;
+        if (obj instanceof boolean[]) return ArgType.BOOLEAN;
+        if (obj instanceof byte[]) return ArgType.I8;
+        if (obj instanceof float[]) return ArgType.F32;
+        if (obj instanceof double[]) return ArgType.F64;
+        if (obj instanceof short[]) return ArgType.I16;
+        if (obj instanceof char[]) return ArgType.CHAR;
+
+        Object[] elements = toArray(obj);
+        if (elements.length == 0) return ArgType.HANDLE;
+        ArgType first = ArgType.determineType(elements[0].getClass());
+        for (Object e: elements) {
+            if (e == null || ArgType.determineType(e.getClass()) != first) return ArgType.HANDLE;
         }
+        return first;
+    }
 
-        if (elements.length == 0) return 0;
+    private int getStride(ArgType type) {
+        return switch (type) {
+            case I8, BOOLEAN -> 1;
+            case I16 -> 2;
+            case I32, F32 -> 4;
+            default -> 8; // I64, F64, HANDLE, CHAR
+        };
+    }
 
-        // Determine if homogeneous or handle-fallback
-        ArgType detectedType = determineType(elements[0]);
-        if (detectedType != ArgType.HANDLE) {
-            for (Object element : elements) {
-                if (element == null || determineType(element) != detectedType) {
-                    detectedType = ArgType.HANDLE;
-                    break;
-                }
+    private Object[] toArray(Object obj) {
+        if (obj instanceof Object[] arr) return arr;
+        if (obj instanceof Collection<?> c) return c.toArray();
+        int len = java.lang.reflect.Array.getLength(obj);
+        Object[] res = new Object[len];
+        for (int i = 0; i < len; i++) res[i] = java.lang.reflect.Array.get(obj, i);
+        return res;
+    }
+
+    @WasmExport(params = {"handle", "ptr"})
+    public int pull_list_elements(Instance inst, long handle, int ptr) {
+        Object obj = bridge.getObject(handle);
+        if (obj == null) return 0;
+
+        // 1. Determine Type and Length
+        int count = getLength(obj);
+        ArgType type = determineHomogeneousType(obj);
+
+        // 2. Write Header: [Tag(i32)][Count(i32)]
+        Memory mem = inst.memory();
+        mem.writeI32(ptr, type.tag);
+        mem.writeI32(ptr + 4, count);
+
+        // 3. Dispatch to specific writer based on Type
+        int dataStart = ptr + 8;
+        return switch (type) {
+            case I8, BOOLEAN -> writeI8(mem, dataStart, obj, count);
+            case I16 -> writeI16(mem, dataStart, obj, count);
+            case I32, F32 -> writeI32(mem, dataStart, obj, count);
+            case I64, F64, HANDLE -> writeI64(mem, dataStart, obj, count);
+            case CHAR -> writeChars(inst, dataStart, obj, count);
+        };
+    }
+
+    private int writeI8(Memory mem, int start, Object obj, int count) {
+        if (obj instanceof byte[] arr) {
+            mem.write(start, arr);
+        } else if (obj instanceof boolean[] arr) {
+            for (int i = 0; i < count; i++) mem.writeByte(start + i, (byte) (arr[i] ? 1 : 0));
+        } else {
+            Object[] elements = toArray(obj);
+            for (int i = 0; i < count; i++) {
+                byte b = (elements[i] instanceof Boolean bool) ? (byte) (bool ? 1 : 0) : (Byte) elements[i];
+                mem.writeByte(start + i, b);
             }
         }
-
-        return writeContiguous(inst, base, detectedType, elements);
+        return count;
     }
 
-    // --- Specialized Primitive Overloads ---
+    // --- Helper Utilities ---
 
-    private int writeContiguous(Instance inst, int base, ArgType type, int[] arr) {
-        writeHeader(inst, base, type, arr.length);
-        for (int i = 0; i < arr.length; i++) inst.memory().writeI32(base + 8 + (i * 4), arr[i]);
-        return arr.length;
-    }
-
-    private int writeContiguous(Instance inst, int base, ArgType type, long[] arr) {
-        writeHeader(inst, base, type, arr.length);
-        for (int i = 0; i < arr.length; i++) inst.memory().writeLong(base + 8 + (i * 8), arr[i]);
-        return arr.length;
-    }
-
-    private int writeContiguous(Instance inst, int base, ArgType type, float[] arr) {
-        writeHeader(inst, base, type, arr.length);
-        for (int i = 0; i < arr.length; i++) inst.memory().writeF32(base + 8 + (i * 4), arr[i]);
-        return arr.length;
-    }
-
-    private int writeContiguous(Instance inst, int base, ArgType type, double[] arr) {
-        writeHeader(inst, base, type, arr.length);
-        for (int i = 0; i < arr.length; i++) inst.memory().writeF64(base + 8 + (i * 8), arr[i]);
-        return arr.length;
-    }
-
-    private int writeContiguous(Instance inst, int base, ArgType type, boolean[] arr) {
-        writeHeader(inst, base, type, arr.length);
-        for (int i = 0; i < arr.length; i++) {
-            inst.memory().writeByte(base + 8 + i, (byte) (arr[i] ? 1 : 0));
+    private int writeI16(Memory mem, int start, Object obj, int count) {
+        if (obj instanceof short[] arr) {
+            for (int i = 0; i < count; i++) mem.writeShort(start + (i * 2), arr[i]);
+        } else {
+            Object[] elements = toArray(obj);
+            for (int i = 0; i < count; i++) mem.writeShort(start + (i * 2), (Short) elements[i]);
         }
-        return arr.length;
+        return count;
     }
 
-    private int writeContiguous(Instance inst, int base, ArgType type, byte[] arr) {
-        writeHeader(inst, base, type, arr.length);
-        inst.memory().write(base + 8, arr);
-        return arr.length;
-    }
-
-    private int writeContiguous(Instance inst, int base, ArgType type, short[] arr) {
-        writeHeader(inst, base, type, arr.length);
-        for (int i = 0; i < arr.length; i++) {
-            inst.memory().writeShort(base + 8 + (i * 2), arr[i]);
+    private int writeI32(Memory mem, int start, Object obj, int count) {
+        if (obj instanceof int[] arr) {
+            for (int i = 0; i < count; i++) mem.writeI32(start + (i * 4), arr[i]);
+        } else if (obj instanceof float[] arr) {
+            for (int i = 0; i < count; i++) mem.writeF32(start + (i * 4), arr[i]);
+        } else {
+            Object[] elements = toArray(obj);
+            for (int i = 0; i < count; i++) {
+                if (elements[i] instanceof Integer val) mem.writeI32(start + (i * 4), val);
+                else mem.writeF32(start + (i * 4), (Float) elements[i]);
+            }
         }
-        return arr.length;
+        return count;
     }
 
-    private int writeContiguous(Instance inst, int base, ArgType type, char[] arr) {
-        writeHeader(inst, base, type, arr.length);
-        for (int i = 0; i < arr.length; i++) {
-            byte[] bytes = String.valueOf(arr[i]).getBytes(StandardCharsets.UTF_8);
+    private int writeI64(Memory mem, int start, Object obj, int count) {
+        if (obj instanceof long[] arr) {
+            for (int i = 0; i < count; i++) mem.writeLong(start + (i * 8), arr[i]);
+        } else if (obj instanceof double[] arr) {
+            for (int i = 0; i < count; i++) mem.writeF64(start + (i * 8), arr[i]);
+        } else {
+            Object[] elements = toArray(obj);
+            for (int i = 0; i < count; i++) {
+                if (elements[i] instanceof Long val) mem.writeLong(start + (i * 8), val);
+                else if (elements[i] instanceof Double val) mem.writeF64(start + (i * 8), val);
+                else mem.writeLong(start + (i * 8), bridge.registerObject(elements[i]));
+            }
+        }
+        return count;
+    }
+
+    private int writeChars(Instance inst, int start, Object obj, int count) {
+        Object[] elements = toArray(obj);
+        for (int i = 0; i < count; i++) {
+            byte[] bytes = String.valueOf(elements[i]).getBytes(StandardCharsets.UTF_8);
             int ptr = (int) inst.export("malloc").apply(bytes.length)[0];
             inst.memory().write(ptr, bytes);
-            // char uses 8-byte slots for [ptr, len]
-            inst.memory().writeI32(base + 8 + (i * 8), ptr);
-            inst.memory().writeI32(base + 8 + (i * 8) + 4, bytes.length);
+            inst.memory().writeI32(start + (i * 8), ptr);
+            inst.memory().writeI32(start + (i * 8) + 4, bytes.length);
         }
-        return arr.length;
-    }
-
-    // --- Boxed/Heterogeneous Overload ---
-
-    private int writeContiguous(Instance inst, int base, ArgType type, Object[] elements) {
-        writeHeader(inst, base, type, elements.length);
-        Memory mem = inst.memory();
-        int dataStart = base + 8;
-
-        for (int i = 0; i < elements.length; i++) {
-            Object val = elements[i];
-            if (val == null) {
-                writeDefaultValue(mem, type, dataStart, i);
-                continue;
-            }
-
-            switch (type) {
-                case HANDLE -> {
-                    long handle = kernel.registerObject(val);
-                    mem.writeLong(dataStart + (i * 8), handle);
-                }
-                case I32 -> mem.writeI32(dataStart + (i * 4), (Integer) val);
-                case I64 -> mem.writeLong(dataStart + (i * 8), (Long) val);
-                case F32 -> mem.writeF32(dataStart + (i * 4), (Float) val);
-                case F64 -> mem.writeF64(dataStart + (i * 8), (Double) val);
-                case BOOLEAN -> mem.writeByte(dataStart + i, (byte) ((Boolean) val ? 1 : 0));
-                case I8 -> mem.writeByte(dataStart + i, (Byte) val);
-                case I16 -> mem.writeShort(dataStart + (i * 2), (Short) val);
-                case CHAR -> {
-                    byte[] bytes = String.valueOf((Character) val).getBytes(StandardCharsets.UTF_8);
-                    int ptr = (int) inst.export("malloc").apply(bytes.length)[0];
-                    inst.memory().write(ptr, bytes);
-                    mem.writeI32(dataStart + (i * 8), ptr);
-                    mem.writeI32(dataStart + (i * 8) + 4, bytes.length);
-                }
-            }
-        }
-        return elements.length;
-    }
-
-    private void writeDefaultValue(Memory mem, ArgType type, int start, int index) {
-        switch (type) {
-            case HANDLE -> mem.writeLong(start + (index * 8), WasJVMBridge.INVALID_HANDLE);
-            case I8, BOOLEAN -> mem.writeByte(start + index, (byte) 0);
-            case I16 -> mem.writeShort(start + (index * 2), (short) 0);
-            case I32, F32 -> mem.writeI32(start + (index * 4), 0);
-            case I64, F64, CHAR -> mem.writeLong(start + (index * 8), 0L);
-        }
-    }
-
-    private void writeHeader(Instance inst, int base, ArgType type, int count) {
-        inst.memory().writeI32(base, type.tag);
-        inst.memory().writeI32(base + 4, count);
-    }
-
-    private ArgType determineType(Object first) {
-        if (first instanceof Integer) return ArgType.I32;
-        if (first instanceof Long) return ArgType.I64;
-        if (first instanceof Float) return ArgType.F32;
-        if (first instanceof Double) return ArgType.F64;
-        if (first instanceof Boolean) return ArgType.BOOLEAN;
-        if (first instanceof Byte) return ArgType.I8;
-        if (first instanceof Short) return ArgType.I16;
-        if (first instanceof Character) return ArgType.CHAR;
-        return ArgType.HANDLE;
+        return count;
     }
 }

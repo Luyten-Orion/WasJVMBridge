@@ -1,26 +1,40 @@
 package quest.yu_vitaqua_fer_chronos.wasjvmbridge.modules;
 
-import com.dylibso.chicory.runtime.HostFunction;
-import com.dylibso.chicory.wasm.types.FunctionType;
-import com.dylibso.chicory.wasm.types.ValType;
+import com.dylibso.chicory.runtime.Instance;
 import quest.yu_vitaqua_fer_chronos.wasjvmbridge.WasJVMBridge;
+import quest.yu_vitaqua_fer_chronos.wasjvmbridge.api.HostApi;
+import quest.yu_vitaqua_fer_chronos.wasjvmbridge.utils.WasmExport;
 
-import java.util.List;
-
-public class CoreModule extends ModuleBase {
-    public CoreModule(WasJVMBridge kernel) {
-        super(kernel);
+public class CoreModule extends HostApi {
+    public CoreModule(WasJVMBridge bridge) {
+        super(bridge);
     }
 
-    public List<HostFunction> getFunctions() {
-        return List.of(new HostFunction(WasJVMBridge.NAMESPACE, "flush_error", FunctionType.empty(), (inst, args) -> {
-            kernel.lastError.remove();
-            return null;
-        }), new HostFunction(WasJVMBridge.NAMESPACE, "get_last_error_handle", FunctionType.returning(ValType.I64), (inst, args) -> new long[]{kernel.lastError.get().handle()}), new HostFunction(WasJVMBridge.NAMESPACE, "get_last_error_message", FunctionType.of(List.of(ValType.I32, ValType.I32), List.of(ValType.I32)), (inst, args) -> {
-            byte[] msg = kernel.lastError.get().message().getBytes();
-            int length = Math.min(msg.length, (int) args[1]);
-            inst.memory().write((int) args[0], msg, 0, length);
-            return new long[]{length};
-        }));
+    @Override
+    public String getNamespace() {
+        return "wasjvmb_core";
+    }
+
+    @WasmExport
+    public void flush_error() {
+        bridge.lastError.remove();
+    }
+
+    @WasmExport
+    public long get_last_error_handle() {
+        return bridge.lastError.get().handle();
+    }
+
+    @WasmExport(params = {"buf_ptr", "max_len"})
+    public int get_last_error_message(Instance inst, int ptr, int maxLen) {
+        byte[] msg = bridge.lastError.get().message().getBytes();
+        int len = Math.min(msg.length, maxLen);
+        inst.memory().write(ptr, msg, 0, len);
+        return len;
+    }
+
+    @WasmExport(params = {"handle"})
+    public void release_instance(long handle) {
+        bridge.globalInstanceRegistry.remove(handle);
     }
 }
